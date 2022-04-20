@@ -69,17 +69,50 @@ fn get_email_data() -> SendEmail {
         }
         println!("Body field needs a value:");
     }
-    get_py_encryption(&email_body).ok();
 
     return SendEmail {
         to: destination,
         from: sent_from,
         title: email_title,
-        emailBody: email_body,
+        emailBody: get_py_encryption(&email_body).unwrap(),
     };
 }
+pub fn get_py_decryption(email_body: &String) -> PyResult<String> {
+    pyo3::prepare_freethreaded_python();
+    Python::with_gil(|py| {
+        let encryption = PyModule::from_code(
+            py,
+            r#"
+def vigenere(text: str, key: str, encrypt=True):
+    result = ''
 
-pub fn get_py_encryption(email_body: &String) -> PyResult<()> {
+    for i in range(len(text)):
+        letter_n = ord(text[i])
+        key_n = ord(key[i % len(key)])
+
+        if encrypt:
+            value = (letter_n + key_n) % 1114112
+        else:
+            value = (letter_n - key_n) % 1114112
+
+        result += chr(value)
+
+    return result
+
+def vigenere_decrypt(text: str, key: str):
+    return vigenere(text=text, key=key, encrypt=False)
+                "#,
+            "vigenere.py",
+            "vigenere",
+        )?;
+        let decryption_result :String = encryption.getattr("vigenere_decrypt")?.call1((email_body,"hola".to_string()))?.extract()?;
+        println!("{}", decryption_result);
+
+        Ok(decryption_result)
+    })
+}
+
+pub fn get_py_encryption(email_body: &String) -> PyResult<String> {
     pyo3::prepare_freethreaded_python();
     Python::with_gil(|py| {
         let encryption = PyModule::from_code(
@@ -104,20 +137,14 @@ def vigenere(text: str, key: str, encrypt=True):
 
 def vigenere_encrypt(text: str, key: str):
     return vigenere(text=text, key=key, encrypt=True)
-
-
-def vigenere_decrypt(text: str, key: str):
-    return vigenere(text=text, key=key, encrypt=False)
                 "#,
             "vigenere.py",
             "vigenere",
         )?;
         let encryption_result :String = encryption.getattr("vigenere_encrypt")?.call1((email_body,"hola".to_string()))?.extract()?;
-        let decryption_result :String = encryption.getattr("vigenere_decrypt")?.call1((&encryption_result,"hola".to_string()))?.extract()?;
         println!("{}", encryption_result);
-        println!("{}", decryption_result);
 
-        Ok(())
+        Ok(encryption_result)
     })
 }
 
@@ -148,14 +175,14 @@ async fn main() -> Result<(), Error> {
         }
         if user_input.contains("2") {
             let new_email = get_email_data();
-            let send_email: Email = reqwest::Client::new()
+            let _send_email: Email = reqwest::Client::new()
                 .post("http://localhost:3000/email/send")
                 .json(&new_email)
                 .send()
                 .await?
                 .json()
                 .await?;
-            println!("{:?}", send_email.title);
+            println!("Email sent!");
         }
         if user_input.contains("3") {
             println!();
@@ -183,17 +210,13 @@ async fn main() -> Result<(), Error> {
                 let url = format!("{}/{}", localhost, id);
                 let response = reqwest::get(url).await?;
                 let email: Email = response.json().await?;
-                println!("{}", email.title);
-                println!("{}", email.to);
-                println!("{}", email.from);
-                println!("{}", email.emailBody);
-                println!("{}", email.read);
+                println!("Title: {}", email.title);
+                println!("To: {}", email.to);
+                println!("From: {}", email.from);
+                println!("Body: {}", email.emailBody);
             } else {
                 println!("Not a valid value")
             }
-        } else {
-            break;
-        }
+        }     
     }
-    Ok(())
 }
